@@ -1,0 +1,1275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IMU Motion Demo</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #111110;
+    --surface: #1a1a19;
+    --surface-2: #222220;
+    --border: #2e2e2b;
+    --text: #ffffff;
+    --text-2: #c3c2b7;
+    --text-3: #8d8c84;
+    /* body axes; the same entity keeps the same color in 3D, charts and legends */
+    --ax-x: #d95926;
+    --ax-y: #199e70;
+    --ax-z: #3987e5;
+    --motion: #ffffff;
+    /* status - reserved, always paired with a label */
+    --good: #0ca30c;
+    --warning: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+          "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 10px 18px;
+    border-bottom: 1px solid var(--border); background: var(--surface); flex: none;
+  }
+  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  header .sub { color: var(--text-3); font-size: 13px; }
+  .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px;
+    border: 1px solid var(--border); border-radius: 999px; color: var(--text-2);
+    font-size: 13px; white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
+  button {
+    font: inherit; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 13px; cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover { border-color: #4a4a46; }
+  button:focus-visible { outline: 2px solid var(--ax-z); outline-offset: 2px; }
+  button kbd { color: var(--text-3); font: 12px ui-monospace, Menlo, monospace; margin-left: 6px; }
+  #rec.on { border-color: var(--critical); }
+  #rec.on .dot { background: var(--critical); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+
+  main { flex: 1; display: grid; grid-template-columns: 1fr 380px; min-height: 0; }
+  #view { position: relative; min-width: 0; min-height: 0;
+          background: radial-gradient(ellipse at 50% 35%, #23231f 0%, #111110 70%); }
+  #gl { width: 100%; height: 100%; display: block; }
+  .overlay {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 8px; color: var(--text-2); pointer-events: none;
+    background: rgba(17,17,16,.55); font-size: 16px; text-align: center; padding: 24px;
+  }
+  .overlay small { color: var(--text-3); font-size: 13px; }
+  .hidden { display: none !important; }
+  .legend3d {
+    position: absolute; left: 16px; bottom: 14px; display: flex; gap: 16px; flex-wrap: wrap;
+    color: var(--text-2); font-size: 13px; pointer-events: none;
+  }
+  .legend3d span, .series { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
+  .sw.thick { height: 6px; }
+  #replay {
+    position: absolute; top: 14px; left: 16px; display: flex; align-items: center; gap: 8px;
+    background: rgba(26,26,25,.92); border: 1px solid var(--warning); color: var(--text);
+    padding: 8px 14px; border-radius: 8px; font-size: 14px; pointer-events: none;
+  }
+  #replay b { color: var(--warning); }
+  #toast {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    background: var(--surface-2); border: 1px solid var(--serious); color: var(--text);
+    padding: 8px 14px; border-radius: 8px; font-size: 13px; max-width: 80%;
+    transition: opacity .3s; pointer-events: none;
+  }
+
+  aside {
+    border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto;
+    padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .card { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+  .card h2 { font-size: 13px; font-weight: 500; color: var(--text-2); margin: 0 0 8px;
+             display: flex; justify-content: space-between; gap: 8px; }
+  .card h2 em { font-style: normal; color: var(--text-3); font-weight: 400; }
+  .angles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .angle .v { font-size: 27px; font-weight: 600; letter-spacing: -.01em; }
+  .angle .v small { font-size: 16px; color: var(--text-2); font-weight: 400; }
+  .angle .k { color: var(--text-3); font-size: 12px; }
+  .motion { display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: center; }
+  #dial { width: 150px; height: 150px; display: block; }
+  .motion .dir { font-size: 22px; font-weight: 600; }
+  .motion .mag { color: var(--text-2); }
+  .motion .note { color: var(--text-3); font-size: 12px; margin-top: 6px; }
+  .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .chip { display: flex; align-items: center; gap: 8px; background: var(--surface);
+          border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
+  .chip .k { color: var(--text-3); font-size: 12px; }
+  .chip .v { font-weight: 600; }
+  .hint { color: var(--text-3); font-size: 12px; margin-top: 8px; }
+  .chart canvas { width: 100%; height: 70px; display: block; }
+  .chart .legend { display: flex; gap: 14px; color: var(--text-2); font-size: 12px;
+                   margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+  .chart + .chart { margin-top: 8px; }
+  .rrows { display: grid; gap: 6px; }
+  .rrow { display: grid; grid-template-columns: 44px 1fr 92px; align-items: center; gap: 8px;
+          font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .rrow .bar { height: 8px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border);
+               overflow: hidden; }
+  .rrow .bar i { display: block; height: 100%; width: 0; background: var(--ax-z); border-radius: 0 4px 4px 0; }
+  .rrow .val { text-align: right; color: var(--text); }
+  .rrow .val.dim { color: var(--text-3); }
+  .trajstate { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--text-2); }
+  .trajstate .num { margin-left: auto; color: var(--text-3); }
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .controls button { text-align: left; }
+  .controls .wide { grid-column: span 2; }
+  #recpath { color: var(--text-3); font-size: 12px; word-break: break-all; margin-top: 8px; }
+
+  @media (max-width: 960px) {
+    body { overflow: auto; }
+    main { grid-template-columns: 1fr; grid-template-rows: 60vh auto; }
+    aside { border-left: 0; border-top: 1px solid var(--border); }
+    header { flex-wrap: wrap; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <h1>BNO085 9-Axis Orientation · Live Demo</h1>
+  <span class="sub">ESP32-S3 + BNO085</span>
+  <div class="spacer"></div>
+  <span class="pill" id="conn"><span class="dot"></span><span>Connecting…</span></span>
+  <span class="pill num" id="rate">— Hz</span>
+  <span class="pill num hidden" id="resets"></span>
+  <button id="rec"><span class="dot"></span> <span id="rectext">Record</span><kbd>R</kbd></button>
+  <button id="b-full">Full screen<kbd>F</kbd></button>
+</header>
+
+<main>
+  <section id="view">
+    <canvas id="gl"></canvas>
+    <div class="legend3d">
+      <span><i class="sw" style="background:var(--ax-x)"></i>X axis</span>
+      <span><i class="sw" style="background:var(--ax-y)"></i>Y axis (board forward)</span>
+      <span><i class="sw" style="background:var(--ax-z)"></i>Z axis</span>
+      <span><i class="sw thick" style="background:var(--motion)"></i><span id="arrowname">Motion direction</span></span>
+    </div>
+    <div class="overlay hidden" id="nogl">
+      <div>The 3D view needs an internet connection to load three.js</div>
+      <small>Readouts, charts and recording on the right still work</small>
+    </div>
+    <div class="overlay" id="waiting">
+      <div id="waittext">Waiting for data…</div>
+      <small id="waithint">Check the board is powered and in Bluetooth range, and the host terminal shows no errors</small>
+    </div>
+    <div id="replay" class="hidden"><b>▶ Replay</b><span id="replayfile"></span></div>
+    <div id="toast" class="hidden"></div>
+  </section>
+
+  <aside>
+    <div class="card">
+      <h2><span>Orientation</span><em id="headingref">heading relative to zero</em></h2>
+      <div class="angles">
+        <div class="angle"><div class="v num" id="heading">—</div><div class="k">Heading · R +</div></div>
+        <div class="angle"><div class="v num" id="pitch">—</div><div class="k">Pitch · up +</div></div>
+        <div class="angle"><div class="v num" id="roll">—</div><div class="k">Roll · R +</div></div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="trajcard">
+      <h2><span id="trajtitle">Track</span><em>inertial estimate</em></h2>
+      <div class="angles">
+        <div class="angle"><div class="v num" id="px">—</div><div class="k" id="pxk"></div></div>
+        <div class="angle"><div class="v num" id="py">—</div><div class="k" id="pyk"></div></div>
+        <div class="angle"><div class="v num" id="pz">—</div><div class="k" id="pzk"></div></div>
+      </div>
+      <div class="trajstate"><i class="dot" id="trajdot"></i><span id="trajstate">—</span>
+        <span class="num" id="trajlen"></span></div>
+      <div class="hint" id="trajhint"></div>
+    </div>
+
+    <div class="card" id="motioncard">
+      <h2><span id="motiontitle">Motion direction</span><em>top view · F = zeroed</em></h2>
+      <div class="motion">
+        <canvas id="dial" width="150" height="150"></canvas>
+        <div>
+          <div class="dir" id="dirtext">Still</div>
+          <div class="mag num" id="magtext">—</div>
+          <div class="note" id="motionnote"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span>Sensor status</span><em id="srcname"></em></h2>
+      <div class="chips">
+        <div class="chip"><i class="dot" id="rvdot"></i><div><div class="k">Accuracy (north)</div><div class="v" id="rvtext">—</div></div></div>
+        <div class="chip"><i class="dot" id="magdot"></i><div><div class="k">Magnetometer cal.</div><div class="v" id="magtext2">—</div></div></div>
+      </div>
+      <div class="hint hidden" id="calhint">Slowly draw a few figure-eights in the air to bring magnetometer calibration up to Medium/High</div>
+    </div>
+
+    <div class="card" id="rcard">
+      <h2><span>Resistance channels · FPC</span><em id="rsub">R_ref 10 kΩ (assumed)</em></h2>
+      <div class="rrows" id="rrows"></div>
+      <div class="hint" id="rhint"></div>
+    </div>
+
+    <div class="card">
+      <div class="chart">
+        <h2><span>Linear acceleration · gravity removed</span><em>m/s²</em></h2>
+        <div class="legend" id="lg-acc"></div>
+        <canvas id="ch-acc"></canvas>
+      </div>
+      <div class="chart">
+        <h2><span>Angular rate</span><em>°/s</em></h2>
+        <div class="legend" id="lg-gyr"></div>
+        <canvas id="ch-gyr"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span>Controls</span><em>keyboard shortcuts on the right</em></h2>
+      <div class="controls">
+        <button id="b-mode" class="wide">View: <span id="modelabel"></span><kbd>T</kbd></button>
+        <button id="b-zero">Zero heading<kbd>Z</kbd></button>
+        <button id="b-view">Reset camera<kbd>V</kbd></button>
+        <button id="b-src" class="wide">Orientation: <span id="srclabel"></span><kbd>S</kbd></button>
+        <button id="b-arrow" class="wide">Arrow: <span id="arrowlabel"></span><kbd>M</kbd></button>
+        <button id="b-kind" class="wide">Track method: <span id="kindlabel"></span><kbd>G</kbd></button>
+        <button id="b-clear" class="wide">Clear track<kbd>C</kbd></button>
+      </div>
+      <div id="recpath" class="hidden"></div>
+    </div>
+  </aside>
+</main>
+
+<script type="module">
+// ---------------------------------------------------------------------------
+// Columns of one firmware line (main/imu_stream.c). Lines from the older
+// 19-column firmware still work: the game vector falls back to the absolute
+// one and gravity is removed here instead of on the sensor.
+const F = { t: 0, qw: 1, qx: 2, qy: 3, qz: 4, ax: 8, ay: 9, az: 10, gx: 11, gy: 12, gz: 13,
+            rv: 17, mag: 18, gqw: 19, gqx: 20, gqy: 21, gqz: 22, lx: 23, ly: 24, lz: 25,
+            rch: 26, vsup: 32 };
+// Reference resistor between 3V3 and MEAS_NODE. Not in a netlist: 10 k as on
+// the first board revision. Change it here if the part on the board differs.
+const R_REF = 10000;
+const R_CHANNELS = 6;
+const G = 9.80665;
+const DEG = 180 / Math.PI;
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const COLORS = { x: css('--ax-x'), y: css('--ax-y'), z: css('--ax-z') };
+const STATUS = [
+  { text: 'Unreliable', color: css('--critical') },
+  { text: 'Low',        color: css('--serious') },
+  { text: 'Medium',     color: css('--warning') },
+  { text: 'High',       color: css('--good') },
+];
+
+// --- quaternions as [w, x, y, z] -------------------------------------------
+const qmul = (a, b) => [
+  a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
+  a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
+  a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
+  a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0],
+];
+const qconj = (q) => [q[0], -q[1], -q[2], -q[3]];
+const qnorm = (q) => { const n = Math.hypot(...q) || 1; return q.map((c) => c / n); };
+const qrot = (q, v) => qmul(qmul(q, [0, ...v]), qconj(q)).slice(1);
+const qaxis = (axis, ang) => [Math.cos(ang / 2), ...axis.map((c) => c * Math.sin(ang / 2))];
+
+// The sensor reports in East-North-Up (checked against gravity and the
+// geomagnetic field on this board). Display space is three.js: x right,
+// y up, z toward the viewer, so ENU (e, n, u) -> (e, u, -n). That map is a
+// proper rotation, so a quaternion's vector part transforms the same way.
+const enuToView = (v) => [v[0], v[2], -v[1]];
+const qEnuToView = (q) => [q[0], q[1], q[3], -q[2]];
+// Heading of a view-space orientation: rotation about +y that takes the
+// board's forward axis (sensor +Y, view -z) to where it points now.
+const yawOf = (q) => { const f = qrot(q, [0, 0, -1]); return Math.atan2(-f[0], -f[2]); };
+
+// --- state -----------------------------------------------------------------
+const S = {
+  source: 'game',            // 'game': no magnetometer, smooth | 'abs': points to north
+  arrow: 'vel',              // 'vel': estimated velocity | 'acc': linear acceleration
+  yaw0: 0,                   // heading offset removed by "zero heading"
+  zeroed: false,
+  keepYaw: null,             // displayed yaw to hold across a source switch
+  needZero: true,            // zero on the first sample
+  qView: [1, 0, 0, 0],       // displayed orientation (view space, heading-zeroed)
+  aF: [0, 0, 0],             // filtered linear acceleration, view space
+  v: [0, 0, 0],              // leaky-integrated velocity estimate, view space
+  still: 0,
+  lastT: null,
+  last: null,
+  lastArrival: 0,
+  arrivals: [],
+  hasGame: true,
+  recording: false,
+  recStart: 0,
+  connected: false,
+  view: 'orient',            // 'orient': board fixed at centre | 'traj': board moves, draws its track
+  trajKind: 'gesture',       // 'gesture': last 3 s, continuous | 'strokes': pauses anchor, accumulates
+};
+
+// --- inertial track -------------------------------------------------------------
+// Dead reckoning from the BNO085's gravity-free acceleration, in the
+// heading-zeroed view frame, metres. Integrating twice turns any acceleration
+// error into position error growing with t^2, so the track is built from
+// strokes that start and end at rest:
+//  - while at rest the residual acceleration offset is learned and later
+//    subtracted;
+//  - a stroke opens when the board starts to move and integrates a -> v -> p;
+//  - when the board is at rest again its true velocity is zero, so whatever
+//    velocity is left is drift. Taking that error to have grown linearly
+//    over the stroke, its effect on position at time s into the stroke is
+//    v_end * s^2 / (2 T), which is subtracted from every point of the stroke
+//    (a zero-velocity update with back-correction).
+const ACC_REST = 0.25;       // m/s^2, smoothed |a| below this counts as at rest
+const GYRO_REST = 0.3;       // rad/s
+const REST_HOLD = 0.2;       // s of rest that ends a stroke
+// Tuned on a recording: 0.5 m/s^2 on one sample let hand tremor open nine
+// sub-0.15 s phantom strokes; 0.8 held for two samples left one, and
+// every real movement still opened a stroke.
+const ACC_GO = 0.8;          // m/s^2 that starts a stroke ...
+const GO_SAMPLES = 2;       // ... when held this many samples in a row
+const LONG_STROKE = 4;       // s; beyond this the drift is visible, say so
+const MAX_POINTS = 6000;     // two minutes at 50 Hz
+
+class Tracker {
+  constructor() { this.version = 0; this.clear(); }
+  clear() {
+    this.p = [0, 0, 0];
+    this.v = [0, 0, 0];
+    this.bias = [0, 0, 0];
+    this.aS = [0, 0, 0];     // smoothed, bias-free acceleration for rest detection
+    this.moving = false;
+    this.rest = 0;
+    this.over = 0;
+    this.t0 = 0;
+    this.seg = 0;            // index in pts where the open stroke starts
+    this.pts = [];           // { t, p: [x, y, z] }
+    this.length = 0;
+    this.version++;
+  }
+  update(t, dt, a, rate) {
+    const ac = a.map((c, i) => c - this.bias[i]);
+    this.aS = this.aS.map((c, i) => c * 0.7 + ac[i] * 0.3);
+    const quiet = Math.hypot(...this.aS) < ACC_REST && rate < GYRO_REST;
+    this.rest = quiet ? this.rest + dt : 0;
+
+    if (!this.moving) {
+      if (quiet) this.bias = this.bias.map((b, i) => b * 0.97 + a[i] * 0.03);
+      this.over = Math.hypot(...ac) >= ACC_GO ? this.over + 1 : 0;
+      if (this.over < GO_SAMPLES) return;
+      this.moving = true;
+      this.t0 = t - dt;
+      this.v = [0, 0, 0];
+      this.seg = this.pts.length;
+      this.pts.push({ t: this.t0, p: this.p.slice() });
+    }
+
+    this.v = this.v.map((c, i) => c + ac[i] * dt);
+    this.p = this.p.map((c, i) => c + this.v[i] * dt);
+    this.pts.push({ t, p: this.p.slice() });
+    if (this.pts.length > MAX_POINTS) {
+      const drop = this.pts.length - MAX_POINTS;
+      this.pts.splice(0, drop);
+      this.seg = Math.max(0, this.seg - drop);
+    }
+    if (this.rest >= REST_HOLD) this.endStroke(t);
+  }
+  endStroke(t) {
+    const T = Math.max(t - this.t0, 1e-3), vEnd = this.v;
+    for (let k = this.seg; k < this.pts.length; k++) {
+      const s = this.pts[k].t - this.t0, f = (s * s) / (2 * T);
+      this.pts[k].p = this.pts[k].p.map((c, i) => c - vEnd[i] * f);
+    }
+    for (let k = Math.max(this.seg, 1); k < this.pts.length; k++) {
+      const a = this.pts[k - 1].p, b = this.pts[k].p;
+      this.length += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    }
+    this.p = this.pts[this.pts.length - 1].p.slice();
+    this.v = [0, 0, 0];
+    this.moving = false;
+    this.version++;
+  }
+  strokeAge(t) { return this.moving ? t - this.t0 : 0; }
+}
+const tracker = new Tracker();
+
+// --- continuous gestures --------------------------------------------------------
+// Figure-eights and circles never pause, so there is no rest to anchor a
+// zero-velocity update. Instead only the last few seconds are integrated,
+// and a straight-line trend is removed after each integration: drift from a
+// bias is exactly such a trend, while the gesture's back-and-forth survives.
+// Unlike a high-pass filter this treats every frequency alike, so a
+// figure-eight (its vertical part runs at twice the horizontal rate) keeps
+// its shape instead of being bent into a U. Checked offline on a recorded
+// figure-eight: 3 s windows gave a clean ~50 cm "∞" throughout, while
+// high-pass filtering at 0.1-0.2 Hz turned it into a U.
+const GESTURE_S = 3;
+class Gesture {
+  constructor() { this.buf = []; }
+  clear() { this.buf = []; }
+  push(t, a) {
+    this.buf.push({ t, a });
+    while (this.buf.length && this.buf[0].t < t - GESTURE_S) this.buf.shift();
+  }
+  // Subtract the least-squares straight line through each column of ys.
+  static detrend(ts, ys) {
+    const n = ts.length;
+    let st = 0, stt = 0;
+    for (const t of ts) { st += t; stt += t * t; }
+    const den = n * stt - st * st || 1;
+    for (let i = 0; i < 3; i++) {
+      let sy = 0, sty = 0;
+      for (let k = 0; k < n; k++) { sy += ys[k][i]; sty += ts[k] * ys[k][i]; }
+      const m = (n * sty - st * sy) / den, b = (sy - m * st) / n;
+      for (let k = 0; k < n; k++) ys[k][i] -= m * ts[k] + b;
+    }
+  }
+  // Positions over the window, metres, oldest first, centred on zero.
+  points() {
+    const buf = this.buf, n = buf.length;
+    if (n < 10) return [];
+    const ts = buf.map((s) => s.t - buf[0].t);
+    const mean = [0, 0, 0];
+    for (const s of buf) for (let i = 0; i < 3; i++) mean[i] += s.a[i] / n;
+    const v = [[0, 0, 0]], p = [[0, 0, 0]];
+    for (let k = 1; k < n; k++) {
+      const dt = ts[k] - ts[k - 1];
+      v.push(v[k - 1].map((c, i) => c + (buf[k].a[i] - mean[i]) * dt));
+    }
+    Gesture.detrend(ts, v);
+    for (let k = 1; k < n; k++) {
+      const dt = ts[k] - ts[k - 1];
+      p.push(p[k - 1].map((c, i) => c + v[k][i] * dt));
+    }
+    Gesture.detrend(ts, p);
+    return p;
+  }
+}
+const gesture = new Gesture();
+
+function zeroHeading() {
+  S.needZero = true;
+  tracker.clear();           // the track lives in the heading-zeroed frame
+  gesture.clear();
+}
+
+function onSample(p) {
+  const t = p[F.t] / 1000;
+  const full = p.length >= 26;
+  S.hasGame = full;
+  const useGame = S.source === 'game' && full;
+  const qEnu = qnorm(useGame ? [p[F.gqw], p[F.gqx], p[F.gqy], p[F.gqz]]
+                             : [p[F.qw], p[F.qx], p[F.qy], p[F.qz]]);
+  const qRaw = qEnuToView(qEnu);
+
+  if (S.needZero) {
+    S.yaw0 = yawOf(qRaw);
+    S.zeroed = true;
+    S.needZero = false;
+    S.v = [0, 0, 0];
+  } else if (S.keepYaw !== null) {
+    S.yaw0 = yawOf(qRaw) - S.keepYaw;
+    S.keepYaw = null;
+  }
+  const qView = qnorm(qmul(qaxis([0, 1, 0], -S.yaw0), qRaw));
+  S.qView = qView;
+
+  // Linear acceleration (gravity removed) in the sensor frame.
+  let lin;
+  if (full) {
+    lin = [p[F.lx], p[F.ly], p[F.lz]];
+  } else {
+    const qa = qnorm([p[F.qw], p[F.qx], p[F.qy], p[F.qz]]);
+    const g = qrot(qconj(qa), [0, 0, G]);
+    lin = [p[F.ax] - g[0], p[F.ay] - g[1], p[F.az] - g[2]];
+  }
+  const aView = qrot(qView, enuToView(lin));
+
+  // Motion estimate. Integrating acceleration drifts without bound, so the
+  // velocity leaks away (tau 0.6 s) and is pulled to zero once the board is
+  // clearly at rest. That keeps the arrow honest about direction during a
+  // move and lets it die back afterwards.
+  if (S.lastT !== null && t < S.lastT - 1) { S.v = [0, 0, 0]; }       // board rebooted
+  const dt = S.lastT === null ? 0.02 : Math.min(Math.max(t - S.lastT, 0), 0.1);
+  S.lastT = t;
+  const A = 0.35;
+  S.aF = S.aF.map((c, i) => c * (1 - A) + aView[i] * A);
+  const leak = Math.exp(-dt / 0.6);
+  S.v = S.v.map((c, i) => c * leak + S.aF[i] * dt);
+  const rate = Math.hypot(p[F.gx], p[F.gy], p[F.gz]);
+  S.still = Math.hypot(...S.aF) < 0.25 && rate < 0.3 ? S.still + dt : 0;
+  if (S.still > 0.2) S.v = S.v.map((c) => c * 0.8);
+  if (S.lastT !== null && dt > 0) {
+    tracker.update(t, dt, aView, rate);
+    gesture.push(t, aView);
+  }
+  S.tNow = t;
+
+  S.last = p;
+  const now = performance.now();
+  S.lastArrival = now;
+  S.arrivals.push(now);
+
+  accChart.push(t, lin);
+  gyrChart.push(t, [p[F.gx] * DEG, p[F.gy] * DEG, p[F.gz] * DEG]);
+}
+
+// --- readouts ----------------------------------------------------------------
+function anglesOf(q) {
+  const f = qrot(q, [0, 0, -1]);
+  const r = qrot(q, [1, 0, 0]);
+  const u = qrot(q, [0, 1, 0]);
+  return {
+    heading: Math.atan2(f[0], -f[2]) * DEG,
+    pitch: Math.asin(Math.max(-1, Math.min(1, f[1]))) * DEG,
+    roll: Math.atan2(-r[1], u[1]) * DEG,
+  };
+}
+
+function motionVector() {
+  return S.arrow === 'vel'
+    ? { v: S.v, mag: Math.hypot(...S.v), unit: 'm/s', min: 0.04, full: 1.0 }
+    : { v: S.aF, mag: Math.hypot(...S.aF), unit: 'm/s²', min: 0.3, full: 8.0 };
+}
+
+// Up to two direction words, strongest first, in the zeroed view frame.
+function directionText(v) {
+  const parts = [
+    { k: v[0] >= 0 ? 'right' : 'left', m: Math.abs(v[0]) },
+    { k: v[2] <= 0 ? 'forward' : 'back', m: Math.abs(v[2]) },
+    { k: v[1] >= 0 ? 'up' : 'down', m: Math.abs(v[1]) },
+  ].sort((a, b) => b.m - a.m);
+  let s = parts[0].k[0].toUpperCase() + parts[0].k.slice(1);
+  if (parts[1].m > parts[0].m * 0.5) s += ' + ' + parts[1].k;
+  return s;
+}
+
+const fmtDeg = (d) => {
+  const t = Math.abs(d).toFixed(1);
+  return `${t === '0.0' ? '' : d > 0 ? '+' : '−'}${t}<small>°</small>`;   // no "−0.0"
+};
+
+function updateReadouts() {
+  const now = performance.now();
+  S.arrivals = S.arrivals.filter((a) => now - a < 1000);
+  const fresh = S.last && now - S.lastArrival < 1500;
+  $('rate').textContent = fresh ? `${S.arrivals.length} Hz` : '— Hz';
+  $('waiting').classList.toggle('hidden', !!fresh);
+  if (!fresh) {
+    $('waittext').textContent = S.connected ? 'Connected, waiting for sensor data…' : 'Waiting for data…';
+    return;
+  }
+
+  const a = anglesOf(S.qView);
+  $('heading').innerHTML = fmtDeg(a.heading);
+  $('pitch').innerHTML = fmtDeg(a.pitch);
+  $('roll').innerHTML = fmtDeg(a.roll);
+  $('headingref').textContent = S.source === 'abs' && !S.zeroed ? 'heading from north' : 'heading relative to zero';
+
+  const m = motionVector();
+  if (m.mag < m.min) {
+    $('dirtext').textContent = 'Still';
+    $('magtext').textContent = `< ${m.min} ${m.unit}`;
+  } else {
+    $('dirtext').textContent = directionText(m.v);
+    $('magtext').textContent = `${m.mag.toFixed(2)} ${m.unit}`;
+  }
+
+  const p = S.last;
+  const rv = STATUS[p[F.rv] & 3], mag = STATUS[p[F.mag] & 3];
+  $('rvtext').textContent = rv.text;
+  $('rvdot').style.background = rv.color;
+  $('magtext2').textContent = mag.text;
+  $('magdot').style.background = mag.color;
+  $('calhint').classList.toggle('hidden', (p[F.mag] & 3) >= 2);
+  $('srcname').textContent = S.source === 'game' ? 'smooth mode · no magnetometer' : 'north mode · uses magnetometer';
+
+  updateResistance(p);
+
+  if (S.view === 'traj') {
+    const cm = (v) => {
+      const a = Math.abs(v * 100), t = a < 100 ? a.toFixed(1) : a.toFixed(0);
+      return `${t === '0.0' ? '' : v > 0 ? '+' : '−'}${t}<small>cm</small>`;
+    };
+    if (S.trajKind === 'gesture') {
+      const g = view ? (S.gestShown || []) : gesture.points();
+      const span = [0, 1, 2].map((i) => g.length
+        ? Math.max(...g.map((q) => q[i])) - Math.min(...g.map((q) => q[i])) : 0);
+      const size = (v) => `${(v * 100).toFixed(0)}<small>cm</small>`;
+      $('px').innerHTML = size(span[0]);
+      $('py').innerHTML = size(span[1]);
+      $('pz').innerHTML = size(span[2]);
+      const active = Math.max(...span) > 0.04;
+      $('trajstate').textContent = active ? 'Drawing' : 'Still · try drawing a figure-eight or a circle';
+      $('trajdot').style.background = active ? css('--warning') : css('--good');
+      $('trajlen').textContent = '';
+    } else {
+      $('px').innerHTML = cm(tracker.p[0]);
+      $('py').innerHTML = cm(tracker.p[1]);
+      $('pz').innerHTML = cm(-tracker.p[2]);                  // view -z is forward
+      const age = tracker.strokeAge(S.tNow);
+      const [text, color] = !tracker.moving ? ['Still · corrected', css('--good')]
+        : age > LONG_STROKE ? ['Moving too long, error growing: pause', css('--critical')]
+        : ['Moving…', css('--warning')];
+      $('trajstate').textContent = text;
+      $('trajdot').style.background = color;
+      $('trajlen').textContent = `length ${(tracker.length * 100).toFixed(0)} cm`;
+    }
+  }
+
+  if (S.recording) {
+    const s = Math.floor((Date.now() - S.recStart) / 1000);
+    $('rectext').textContent = `Recording ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }
+}
+
+// --- resistance channels ------------------------------------------------------------
+// Divider: V = Vsup * R / (R_REF + R), so R = R_REF * V / (Vsup - V). Vsup
+// comes from an unrouted mux input, measured through the same path.
+$('rrows').innerHTML = Array.from({ length: R_CHANNELS }, (_, i) =>
+  `<div class="rrow"><span>RCH${i}</span><span class="bar"><i id="rbar${i}"></i></span>` +
+  `<span class="val" id="rval${i}">—</span></div>`).join('');
+function updateResistance(p) {
+  const vs = p.length > F.vsup ? p[F.vsup] : 0;
+  const fitted = vs > 100;
+  $('rhint').textContent = p.length <= F.vsup ? 'This firmware does not send the resistance channels; flash the new build'
+    : !fitted ? 'No ADS1115 found at 0x48: front end not fitted or not answering'
+    : 'Bar = divider ratio V / Vsup: empty at a short, full when nothing is connected';
+  for (let i = 0; i < R_CHANNELS; i++) {
+    const v = fitted ? p[F.rch + i] : NaN, val = $(`rval${i}`);
+    $(`rbar${i}`).style.width = fitted ? `${Math.max(0, Math.min(1, v / vs)) * 100}%` : '0';
+    let text = '—', dim = true;
+    if (fitted && vs - v < vs * 0.01) text = 'open';
+    else if (fitted && v < 2) text = 'short';
+    else if (fitted) {
+      const r = R_REF * v / (vs - v);
+      text = r >= 1e6 ? `${(r / 1e6).toFixed(2)} MΩ` : r >= 1000 ? `${(r / 1000).toFixed(r >= 1e5 ? 0 : 1)} kΩ` : `${r.toFixed(0)} Ω`;
+      dim = false;
+    }
+    val.textContent = text;
+    val.classList.toggle('dim', dim);
+  }
+}
+
+function syncLabels() {
+  const traj = S.view === 'traj';
+  $('modelabel').textContent = traj ? 'track (board moves in space)' : 'orientation (board at centre)';
+  $('trajcard').classList.toggle('hidden', !traj);
+  const gest = S.trajKind === 'gesture';
+  $('kindlabel').textContent = gest ? 'gesture (continuous 8s, circles)' : 'strokes (move-pause, accumulates)';
+  $('trajtitle').textContent = gest ? `Track · last ${GESTURE_S} s of gesture` : 'Track · from start point';
+  [$('pxk').textContent, $('pyk').textContent, $('pzk').textContent] = gest
+    ? ['Width · left-right', 'Height · up-down', 'Depth · fwd-back'] : ['Left-right · right +', 'Up-down · up +', 'Fwd-back · fwd +'];
+  $('trajhint').textContent = gest
+    ? 'Shows the shape and size of the gesture, turned to face the screen and fading out; overall drift of the hand is not accumulated. Press G for strokes to accumulate position.'
+    : 'Pause 0.3 s before and after each move for the best track; non-stop motion drifts within seconds. Press C to start over.';
+  $('motioncard').classList.toggle('hidden', traj);
+  $('srclabel').textContent = S.source === 'game' ? 'smooth (no magnetometer)' : 'north (uses magnetometer)';
+  $('arrowlabel').textContent = S.arrow === 'vel' ? 'motion (estimated velocity)' : 'acceleration';
+  $('arrowname').textContent = S.arrow === 'vel' ? 'Motion direction' : 'Acceleration direction';
+  $('motiontitle').textContent = S.arrow === 'vel' ? 'Motion direction' : 'Acceleration direction';
+  $('motionnote').textContent = S.arrow === 'vel'
+    ? 'Integrated from linear acceleration: shows direction and pace, not an exact speed'
+    : 'Gravity-free acceleration: points the way you push, reverses as you brake';
+}
+
+// --- strip charts -------------------------------------------------------------
+class Strip {
+  constructor(canvasId, legendId, names, fmt, minRange, windowS = 10) {
+    this.c = $(canvasId);
+    this.legend = $(legendId);
+    this.names = names;
+    this.fmt = fmt;
+    this.minRange = minRange;
+    this.range = minRange;
+    this.windowS = windowS;
+    this.t = [];
+    this.v = [];
+    this.legend.innerHTML = names.map((n, i) =>
+      `<span class="series"><i class="sw" style="background:${Object.values(COLORS)[i]}"></i>` +
+      `${n} <span class="num" data-i="${i}">—</span></span>`).join('');
+    this.vals = [...this.legend.querySelectorAll('[data-i]')];
+  }
+  push(t, vals) {
+    if (this.t.length && t < this.t[this.t.length - 1]) { this.t = []; this.v = []; }
+    this.t.push(t);
+    this.v.push(vals);
+    while (this.t.length && this.t[0] < t - this.windowS) { this.t.shift(); this.v.shift(); }
+  }
+  draw() {
+    const c = this.c, dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    if (!this.t.length) return;
+
+    let peak = 0;
+    for (const row of this.v) for (const x of row) peak = Math.max(peak, Math.abs(x));
+    // Grow at once, shrink slowly, so the scale does not jump about.
+    const want = Math.max(this.minRange, peak * 1.15);
+    this.range = want > this.range ? want : this.range * 0.995 + want * 0.005;
+    const R = this.range, padL = 34;
+    const y = (val) => h / 2 - (val / R) * (h / 2 - 3);
+    const t1 = this.t[this.t.length - 1], t0 = t1 - this.windowS;
+    const x = (t) => padL + ((t - t0) / this.windowS) * (w - padL);
+
+    g.strokeStyle = '#2e2e2b'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(padL, h / 2); g.lineTo(w, h / 2); g.stroke();
+    g.fillStyle = '#8d8c84'; g.font = '11px -apple-system, sans-serif'; g.textAlign = 'right';
+    g.fillText(`+${R < 10 ? R.toFixed(1) : R.toFixed(0)}`, padL - 5, 11);
+    g.fillText('0', padL - 5, h / 2 + 4);
+    g.fillText(`−${R < 10 ? R.toFixed(1) : R.toFixed(0)}`, padL - 5, h - 3);
+
+    const colors = Object.values(COLORS);
+    g.lineWidth = 1.6; g.lineJoin = 'round';
+    for (let s = 0; s < this.names.length; s++) {
+      g.strokeStyle = colors[s];
+      g.beginPath();
+      for (let i = 0; i < this.t.length; i++) {
+        const px = x(this.t[i]), py = y(this.v[i][s]);
+        i ? g.lineTo(px, py) : g.moveTo(px, py);
+      }
+      g.stroke();
+    }
+    const last = this.v[this.v.length - 1];
+    this.vals.forEach((el, i) => { el.textContent = this.fmt(last[i]); });
+  }
+}
+const sign = (v, d) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(d)}`;
+const accChart = new Strip('ch-acc', 'lg-acc', ['X', 'Y', 'Z'], (v) => sign(v, 2), 1.0);
+const gyrChart = new Strip('ch-gyr', 'lg-gyr', ['X', 'Y', 'Z'], (v) => sign(v, 0), 30);
+
+// --- direction dial (top-down) -----------------------------------------------
+function drawDial() {
+  const c = $('dial'), dpr = window.devicePixelRatio || 1, W = 150;
+  if (c.width !== W * dpr) { c.width = c.height = W * dpr; }
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, W);
+  const cx = 68, cy = 75, R = 50;
+  g.strokeStyle = '#2e2e2b'; g.lineWidth = 1;
+  g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
+  g.beginPath(); g.arc(cx, cy, R / 2, 0, Math.PI * 2); g.stroke();
+  g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+  g.fillStyle = '#8d8c84'; g.font = '12px -apple-system, "PingFang SC", sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('F', cx, cy - R - 11); g.fillText('B', cx, cy + R + 11);
+  g.fillText('L', cx - R - 10, cy); g.fillText('R', cx + R + 10, cy);
+
+  // vertical component as a bar on the right
+  const bx = 142, bh = R;
+  g.strokeStyle = '#2e2e2b'; g.strokeRect(bx - 3, cy - bh, 6, bh * 2);
+  g.fillText('U', bx, cy - bh - 9); g.fillText('D', bx, cy + bh + 9);
+  if (!S.last) return;
+  const m = motionVector();
+  if (m.mag < m.min) return;
+  const k = Math.min(1, m.mag / m.full) / (m.mag || 1);
+  const hx = m.v[0] * k, hf = -m.v[2] * k, hu = m.v[1] * k;
+  g.fillStyle = '#ffffff';
+  g.fillRect(bx - 2, hu >= 0 ? cy - hu * bh : cy, 4, Math.abs(hu) * bh);
+  const ex = cx + hx * R, ey = cy - hf * R, len = Math.hypot(ex - cx, ey - cy);
+  if (len < 3) return;
+  const ang = Math.atan2(ey - cy, ex - cx);
+  g.strokeStyle = '#ffffff'; g.lineWidth = 3; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(cx, cy); g.lineTo(ex - Math.cos(ang) * 6, ey - Math.sin(ang) * 6); g.stroke();
+  g.beginPath();
+  g.moveTo(ex, ey);
+  g.lineTo(ex - Math.cos(ang - 0.45) * 12, ey - Math.sin(ang - 0.45) * 12);
+  g.lineTo(ex - Math.cos(ang + 0.45) * 12, ey - Math.sin(ang + 0.45) * 12);
+  g.closePath(); g.fill();
+}
+
+// --- 3D view -------------------------------------------------------------------
+let view = null;
+async function init3D() {
+  let THREE, OrbitControls, Line2, LineMaterial, LineGeometry;
+  try {
+    THREE = await import('three');
+    ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+    ({ Line2 } = await import('three/addons/lines/Line2.js'));
+    ({ LineMaterial } = await import('three/addons/lines/LineMaterial.js'));
+    ({ LineGeometry } = await import('three/addons/lines/LineGeometry.js'));
+  } catch (e) {
+    console.warn('three.js unavailable', e);
+    $('nogl').classList.remove('hidden');
+    return null;
+  }
+  const canvas = $('gl');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(36, 1, 1, 30000);
+  // Scene units are millimetres. Orientation view: close up on the board.
+  // Track view: back far enough to see a metre or so around it.
+  // Gesture view: nearly level, since figures are mostly drawn upright.
+  const HOME = { orient: new THREE.Vector3(40, 120, 215), traj: new THREE.Vector3(0, 700, 1350),
+                 gest: new THREE.Vector3(0, 280, 1300) };
+  const TARGET = { orient: new THREE.Vector3(0, -8, 0), traj: new THREE.Vector3(0, -60, 0),
+                   gest: new THREE.Vector3(0, 0, 0) };
+  camera.position.copy(HOME.orient);
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.target.copy(TARGET.orient);
+  controls.maxPolarAngle = Math.PI * 0.495;
+  controls.minDistance = 90;
+  controls.maxDistance = 6000;
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2a26, 1.2));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+  sun.position.set(60, 170, 80);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -260, right: 260, top: 260, bottom: -260, near: 10, far: 1500 });
+  sun.shadow.radius = 5;
+  scene.add(sun, sun.target);
+  const SUN_OFFSET = new THREE.Vector3(60, 170, 80).multiplyScalar(2.5);
+
+  const FLOOR = { orient: -60, traj: -450 };
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(20000, 20000), new THREE.ShadowMaterial({ opacity: 0.4 }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = FLOOR.orient;
+  ground.receiveShadow = true;
+  scene.add(ground);
+  const floorO = new THREE.Group(), floorT = new THREE.Group();
+  floorO.position.y = FLOOR.orient;
+  floorT.position.y = FLOOR.traj;
+  floorT.visible = false;
+  scene.add(floorO, floorT);
+  const gridO = new THREE.GridHelper(420, 21, 0x45453f, 0x2a2a27);
+  gridO.position.y = 0.05;
+  floorO.add(gridO);
+  const gridT = new THREE.GridHelper(4000, 40, 0x45453f, 0x2a2a27);   // 10 cm squares
+  gridT.position.y = 0.05;
+  floorT.add(gridT);
+
+  const sprite = (text, color, size, weight = 600) => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 256;
+    const g = cv.getContext('2d');
+    g.font = `${weight} 150px -apple-system, "PingFang SC", sans-serif`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = color;
+    g.fillText(text, 128, 136);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+    s.scale.set(size, size, 1);
+    return s;
+  };
+  // Direction words painted flat on the floor, readable from the default
+  // camera. Billboards would float up into the board's axes.
+  const floorWords = (floor, r, size) => [['FRONT', 0, -r], ['BACK', 0, r], ['LEFT', -r, 0], ['RIGHT', r, 0]]
+    .forEach(([t, x, z]) => {
+    const cv = document.createElement('canvas');
+    cv.width = 512; cv.height = 128;
+    const g = cv.getContext('2d');
+    g.font = '600 96px -apple-system, "Helvetica Neue", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#6b6a63';
+    g.fillText(t, 256, 68);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const label = new THREE.Mesh(new THREE.PlaneGeometry(size * 2, size / 2),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    label.rotation.x = -Math.PI / 2;
+    label.position.set(x, 0.3, z);
+    floor.add(label);
+  });
+  floorWords(floorO, 165, 30);
+  floorWords(floorT, 1150, 160);
+
+  const arrow = (color, r, opts = {}) => {
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.05, ...opts });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 20), mat);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(r * 2.7, r * 7, 24), mat);
+    shaft.castShadow = head.castShadow = true;
+    const g = new THREE.Group();
+    g.add(shaft, head);
+    g.userData = { shaft, head, r };
+    return g;
+  };
+  const UP = new THREE.Vector3(0, 1, 0);
+  const setArrow = (g, dir, len) => {
+    const { shaft, head, r } = g.userData;
+    const hl = Math.min(r * 7, len * 0.45);
+    shaft.scale.set(1, Math.max(len - hl, 0.001), 1);
+    shaft.position.set(0, (len - hl) / 2, 0);
+    head.scale.set(1, hl / (r * 7), 1);
+    head.position.set(0, len - hl / 2, 0);
+    g.quaternion.setFromUnitVectors(UP, dir);
+  };
+
+  // Board model. Its local frame is the sensor frame mapped to view space:
+  // sensor X -> +x, sensor Y -> -z, sensor Z -> +y.
+  const board = new THREE.Group();
+  scene.add(board);
+  const box = (w, h, d, color, x, y, z, mat = {}) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.05, ...mat }));
+    m.position.set(x, y, z);
+    m.castShadow = m.receiveShadow = true;
+    board.add(m);
+    return m;
+  };
+  box(72, 1.6, 46, 0x1c6b47, 0, 0, 0);                                  // carrier PCB
+  box(5.2, 1.0, 3.8, 0x141414, 18, 1.3, 2);                             // BNO085
+  box(3.2, 0.9, 1.5, 0xb9b6a8, 18, 1.25, -6, { metalness: 0.6 });       // 32.768 kHz crystal
+  for (const [x, z] of [[11, 2], [11, -2], [25, 2], [25, -2], [14, 8], [22, 8]])
+    box(1.6, 0.8, 0.8, 0x8a6d3b, x, 1.2, z);                            // 0603 R/C
+  for (const z of [-10, 10]) box(2.5, 5, 18, 0x101010, -16, 3.3, z * 0.95); // headers
+  box(21, 1.0, 17.5, 0x20242c, -16, 6.3, 0);                            // XIAO PCB
+  box(12.5, 2.2, 11, 0xd5d7da, -14, 7.9, 0, { metalness: 0.9, roughness: 0.3 }); // shield can
+  box(7.4, 3.2, 9, 0xc9cbcf, -25.5, 8.4, 0, { metalness: 0.9, roughness: 0.3 }); // USB-C
+
+  const axes = [
+    { dir: [1, 0, 0], color: COLORS.x, len: 58, name: 'X' },
+    { dir: [0, 0, -1], color: COLORS.y, len: 48, name: 'Y' },
+    { dir: [0, 1, 0], color: COLORS.z, len: 40, name: 'Z' },
+  ];
+  for (const a of axes) {
+    const g = arrow(a.color, 0.9);
+    const d = new THREE.Vector3(...a.dir);
+    setArrow(g, d, a.len);
+    board.add(g);
+    const s = sprite(a.name, a.color, 13);
+    s.position.copy(d.clone().multiplyScalar(a.len + 8));
+    board.add(s);
+  }
+
+  // Motion arrow lives in world space and is drawn over the board so it is
+  // never hidden inside it.
+  const motion = arrow(0xffffff, 1.8, { depthTest: false, transparent: true, opacity: 0.95,
+                                        emissive: 0x555555 });
+  motion.renderOrder = 10;
+  motion.children.forEach((m) => { m.renderOrder = 10; m.castShadow = false; });
+  scene.add(motion);
+  const motionLabel = sprite('', '#ffffff', 16);
+  motionLabel.material.depthTest = false;
+  motionLabel.renderOrder = 11;
+  scene.add(motionLabel);
+
+  const trailMat = new LineMaterial({ color: 0xffffff, linewidth: 3, vertexColors: true,
+                                      transparent: true, opacity: 0.95 });
+  let trail = null;
+  const trailShadow = new THREE.Line(new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0x6b6a63 }));
+  trailShadow.frustumCulled = false;
+  const plumb = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+    new THREE.LineDashedMaterial({ color: 0x8d8c84, dashSize: 12, gapSize: 10 }));
+  plumb.frustumCulled = false;
+  scene.add(trailShadow, plumb);
+  let trailVersion = -1, trailBuiltAt = 0, trailCount = 0;
+  // pts: [x, y, z] in metres. fade: dim the oldest part, for the rolling
+  // gesture window.
+  const rebuildTrail = (pts, fade) => {
+    if (trail) { scene.remove(trail); trail.geometry.dispose(); trail = null; }
+    trailCount = pts.length;
+    if (pts.length < 2) return;
+    const n = pts.length;
+    const line = new Float32Array(n * 3), shadow = new Float32Array(n * 3), colors = new Float32Array(n * 3);
+    pts.forEach((q, k) => {
+      line.set([q[0] * 1000, q[1] * 1000, q[2] * 1000], k * 3);
+      shadow.set([q[0] * 1000, FLOOR.traj + 1, q[2] * 1000], k * 3);
+      const c = fade ? 0.12 + 0.88 * Math.pow(k / (n - 1), 1.6) : 1;
+      colors.set([c, c, c], k * 3);
+    });
+    const g = new LineGeometry();
+    g.setPositions(line);
+    g.setColors(colors);
+    trail = new Line2(g, trailMat);
+    trail.frustumCulled = false;
+    scene.add(trail);
+    trailShadow.geometry.setAttribute('position', new THREE.BufferAttribute(shadow, 3));
+    trailShadow.geometry.setDrawRange(0, pts.length);
+  };
+
+  const resize = () => {
+    const el = $('view'), w = el.clientWidth, h = el.clientHeight;
+    renderer.setSize(w, h, false);
+    trailMat.resolution.set(w, h);
+    camera.aspect = w / Math.max(h, 1);
+    camera.updateProjectionMatrix();
+  };
+  new ResizeObserver(resize).observe($('view'));
+  resize();
+
+  const target = new THREE.Quaternion();
+  const boardGoal = new THREE.Vector3();
+  const ORIGIN = new THREE.Vector3();
+  const faceQ = new THREE.Quaternion();
+  let gestPts = [];
+  // Auto-face: find the gesture's main horizontal direction (principal axis
+  // of its x/z spread) and turn it to run across the screen. The axis has no
+  // sign, so take the representative nearest the current angle, and ease
+  // towards it so the drawing does not spin.
+  let faceYaw = 0;
+  const faceAudience = (pts) => {
+    let sxx = 0, szz = 0, sxz = 0;
+    for (const q of pts) { sxx += q[0] * q[0]; szz += q[2] * q[2]; sxz += q[0] * q[2]; }
+    if (pts.length && (sxx + szz) / pts.length > 0.03 ** 2) {     // > ~3 cm of horizontal motion
+      let th = 0.5 * Math.atan2(2 * sxz, sxx - szz);
+      while (th - faceYaw > Math.PI / 2) th -= Math.PI;
+      while (th - faceYaw < -Math.PI / 2) th += Math.PI;
+      faceYaw += (th - faceYaw) * 0.08;
+    }
+    const c = Math.cos(faceYaw), sn = Math.sin(faceYaw);
+    return pts.map(([x, y, z]) => [x * c + z * sn, y, -x * sn + z * c]);
+  };
+  const LABEL_LIFT = new THREE.Vector3(0, 9, 0);
+  const dir = new THREE.Vector3();
+  return {
+    resetView() {
+      const m = S.view !== 'traj' ? 'orient' : S.trajKind === 'gesture' ? 'gest' : 'traj';
+      const off = HOME[m].clone().sub(TARGET[m]);
+      controls.target.copy(TARGET[m]).add(m === 'gest' ? ORIGIN : board.position);
+      camera.position.copy(controls.target).add(off);
+    },
+    setLabel(text) {
+      const cv = motionLabel.material.map.image, g = cv.getContext('2d');
+      g.clearRect(0, 0, 256, 256);
+      g.font = '600 58px -apple-system, "Helvetica Neue", sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffffff';
+      g.fillText(text, 128, 136);
+      motionLabel.material.map.needsUpdate = true;
+    },
+    render() {
+      const traj = S.view === 'traj';
+      const q = S.qView;
+      target.set(q[1], q[2], q[3], q[0]);
+      // In gesture view everything is turned by faceYaw about the vertical,
+      // the board included, so the drawing faces the audience.
+      faceQ.setFromAxisAngle(UP, traj && S.trajKind === 'gesture' ? faceYaw : 0);
+      target.premultiply(faceQ);
+      board.quaternion.slerp(target, 0.45);
+
+      floorO.visible = !traj;
+      floorT.visible = traj;
+      ground.position.y = traj ? FLOOR.traj : FLOOR.orient;
+      const gest = S.trajKind === 'gesture';
+      const now = performance.now();
+      if (traj && gest) {
+        if (now - trailBuiltAt > 40) {
+          gestPts = faceAudience(gesture.points());
+          S.gestShown = gestPts;
+          rebuildTrail(gestPts, true);
+          trailBuiltAt = now;
+          trailVersion = -1;
+        }
+        const last = gestPts[gestPts.length - 1] || [0, 0, 0];
+        boardGoal.set(last[0] * 1000, last[1] * 1000, last[2] * 1000);
+      } else if (traj) {
+        if (tracker.version !== trailVersion || (tracker.moving && now - trailBuiltAt > 80)) {
+          rebuildTrail(tracker.pts.map((q) => q.p), false);
+          trailVersion = tracker.version;
+          trailBuiltAt = now;
+        }
+        boardGoal.set(tracker.p[0] * 1000, tracker.p[1] * 1000, tracker.p[2] * 1000);
+      } else {
+        boardGoal.set(0, 0, 0);
+      }
+      board.position.lerp(boardGoal, 0.5);
+      board.scale.setScalar(traj ? 2 : 1);                 // stays visible from further back
+      sun.position.copy(board.position).add(SUN_OFFSET);
+      sun.target.position.copy(board.position);
+      motion.position.copy(board.position);
+
+      if (traj) {
+        // Ease the camera after the board, keeping whatever angle the user
+        // has orbited to.
+        // A gesture stays around its centre, so hold the camera there.
+        const before = controls.target.clone();
+        controls.target.lerp(gest ? ORIGIN : board.position, 0.06);
+        camera.position.add(controls.target.clone().sub(before));
+        const a = plumb.geometry.attributes.position;
+        a.setXYZ(0, board.position.x, board.position.y, board.position.z);
+        a.setXYZ(1, board.position.x, FLOOR.traj, board.position.z);
+        a.needsUpdate = true;
+        plumb.computeLineDistances();
+      }
+      if (trail) trail.visible = traj;
+      trailShadow.visible = traj && trailCount >= 2;
+      plumb.visible = traj;
+
+      const m = motionVector();
+      const show = !!S.last && m.mag >= m.min;
+      motion.visible = motionLabel.visible = show;
+      if (show) {
+        dir.set(...m.v).normalize();
+        const len = 22 + 88 * Math.min(1, m.mag / m.full);
+        setArrow(motion, dir, len);
+        motionLabel.position.copy(dir).multiplyScalar(len + 12).add(LABEL_LIFT)   // clear of the axis labels
+          .add(board.position);
+      }
+      controls.update();
+      renderer.render(scene, camera);
+    },
+  };
+}
+
+// --- server link ---------------------------------------------------------------
+function setConn(text, color) {
+  const el = $('conn');
+  el.querySelector('.dot').style.background = color;
+  el.lastElementChild.textContent = text;
+}
+function onState(st) {
+  S.connected = st.connected;
+  $('waithint').textContent = st.port.startsWith('BLE')
+    ? 'Check the board is powered and within Bluetooth range; the host terminal shows the search'
+    : 'Check the USB cable, and that the host terminal shows no errors';
+  const replay = st.port.startsWith('Replay');
+  $('replay').classList.toggle('hidden', !replay);
+  if (replay) {
+    $('replayfile').textContent = `showing recorded file ${st.port.slice(7)}, not the live board`;
+    setConn(st.port, css('--warning'));
+  } else {
+    setConn(st.connected ? `Connected · ${st.port.replace('/dev/cu.', '')}` : `${st.port.replace('/dev/cu.', '')} · not connected, retrying…`,
+            st.connected ? css('--good') : css('--critical'));
+  }
+  S.recording = st.recording;
+  if (st.recording) S.recStart = Date.now() - st.rec_seconds * 1000;
+  $('rec').classList.toggle('on', st.recording);
+  if (!st.recording) $('rectext').textContent = 'Record';
+  $('recpath').classList.toggle('hidden', !st.csv_path);
+  if (st.csv_path) $('recpath').textContent = (st.recording ? 'Writing ' : 'Saved ') + st.csv_path;
+}
+
+let toastTimer = 0;
+function toast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 4500);
+}
+
+function connect() {
+  const es = new EventSource('/events');
+  es.addEventListener('s', (e) => onSample(e.data.split(',').map(Number)));
+  es.addEventListener('state', (e) => onState(JSON.parse(e.data)));
+  es.addEventListener('rate', (e) => {
+    const m = /BNO resets (\d+)/.exec(JSON.parse(e.data));
+    if (m && +m[1] > 0) {
+      $('resets').classList.remove('hidden');
+      $('resets').textContent = `Sensor resets: ${m[1]}`;
+    }
+  });
+  es.addEventListener('log', (e) => {
+    const line = JSON.parse(e.data);
+    if (/reset itself/.test(line)) {
+      const why = /power-on/.test(line) ? 'supply dropped (likely a loose 3V3/GND contact)'
+                : /external/.test(line) ? 'NRST was pulled low'
+                : /watchdog/.test(line) ? 'sensor firmware hung' : 'unknown cause';
+      // The game vector's heading reference restarts with the sensor, and
+      // its tilt re-converges from flat, so the model would swing for no
+      // physical reason. Re-zero and clear the motion estimate.
+      if (S.source === 'game') zeroHeading();
+      else { tracker.clear(); gesture.clear(); }
+      S.v = [0, 0, 0];
+      toast(`Sensor reset: ${why}. Orientation settles again within 1–2 s; heading re-zeroed.`);
+    } else if (/^E \(/.test(line)) {
+      toast(line.replace(/^E \(\d+\) /, ''));
+    }
+  });
+  es.onerror = () => { S.connected = false; setConn('Host program not running', css('--critical')); };
+}
+
+// --- controls ------------------------------------------------------------------
+const actions = {
+  zero() { zeroHeading(); },
+  mode() {
+    S.view = S.view === 'traj' ? 'orient' : 'traj';
+    if (S.view === 'traj') tracker.clear();
+    syncLabels();
+    view && view.resetView();
+  },
+  clear() { tracker.clear(); gesture.clear(); },
+  kind() {
+    S.trajKind = S.trajKind === 'gesture' ? 'strokes' : 'gesture';
+    tracker.clear();
+    gesture.clear();
+    syncLabels();
+    view && view.resetView();
+  },
+  view() { view && view.resetView(); },
+  src() {
+    if (!S.hasGame) { toast('This firmware sends no smooth-mode orientation; flash the new firmware'); return; }
+    S.keepYaw = yawOf(S.qView);
+    S.source = S.source === 'game' ? 'abs' : 'game';
+    syncLabels();
+  },
+  arrow() {
+    S.arrow = S.arrow === 'vel' ? 'acc' : 'vel';
+    syncLabels();
+    view && view.setLabel(S.arrow === 'vel' ? 'Motion' : 'Accel');
+  },
+  async rec() {
+    const r = await fetch('/record', { method: 'POST', body: JSON.stringify({ on: !S.recording }) });
+    onState(await r.json());
+  },
+  full() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  },
+};
+$('b-zero').onclick = actions.zero;
+$('b-mode').onclick = actions.mode;
+$('b-clear').onclick = actions.clear;
+$('b-kind').onclick = actions.kind;
+$('b-view').onclick = actions.view;
+$('b-src').onclick = actions.src;
+$('b-arrow').onclick = actions.arrow;
+$('b-full').onclick = actions.full;
+$('rec').onclick = actions.rec;
+const KEYS = { z: 'zero', v: 'view', s: 'src', m: 'arrow', r: 'rec', f: 'full', t: 'mode', c: 'clear', g: 'kind' };
+window.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const a = KEYS[e.key.toLowerCase()];
+  if (a) { e.preventDefault(); actions[a](); }
+});
+
+// --- main loop -------------------------------------------------------------------
+syncLabels();
+connect();
+view = await init3D();
+if (view) view.setLabel('Motion');
+let lastText = 0;
+(function frame(now) {
+  requestAnimationFrame(frame);
+  if (view) view.render();
+  accChart.draw();
+  gyrChart.draw();
+  drawDial();
+  if (now - lastText > 80) { updateReadouts(); lastText = now; }
+})(0);
+</script>
+</body>
+</html>

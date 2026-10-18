@@ -1,0 +1,22 @@
+CONFIG_IDF_TARGET="esp32s3"
+# Console on UART0 and, as a secondary output, on the native USB port. The
+# XIAO ESP32-S3 only exposes native USB; a DevKitC-style board usually wires
+# UART0 to its USB-UART bridge. This way the same image logs on both.
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
+# 50 lines/s of 26 columns is ~9 KB/s, three quarters of what 115200 can
+# carry, and printf blocks the sh2 loop while the bytes drain. 921600 gives
+# headroom. The baud rate is only honoured for a *custom* UART console (the
+# "default" one is pinned to 115200), so pick UART0 on its usual pins that way.
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_CUSTOM_NUM_0=y
+CONFIG_ESP_CONSOLE_UART_TX_GPIO=43
+CONFIG_ESP_CONSOLE_UART_RX_GPIO=44
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600
+CONFIG_ESP_TASK_WDT_INIT=n
+# 1 ms ticks so the sh2 service loop can poll H_INTN at 1 kHz with vTaskDelay(1).
+CONFIG_FREERTOS_HZ=1000
+# BLE link to the host dashboard (main/ble_link.c): NimBLE host, BLE-only controller.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247

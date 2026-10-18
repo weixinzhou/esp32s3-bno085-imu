@@ -1,0 +1,17 @@
+# ESP-IDF build output and generated config (sdkconfig.defaults is the source)
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# Host tools
+host/logs/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Editor settings (machine-specific paths and ports)
+.vscode/
